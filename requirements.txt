@@ -1,16 +1,15 @@
-dbt-core>=1.11.0,<2.0.0
-
-dbt-bigquery>=1.11.0,<2.0.0
-
+# Streamlit Cloud — no service account needed when DASHBOARD_DATA_SOURCE=cache
 pandas>=2.2.0
-
-google-cloud-bigquery>=3.0.0
-
-db-dtypes>=1.4.0
-
+pyarrow>=14.0.0
 streamlit>=1.44.0
-
 plotly>=6.0.0
-
 matplotlib>=3.8.0
 
+# Optional — only needed for live BigQuery (DASHBOARD_DATA_SOURCE=bq or auto with credentials)
+google-cloud-bigquery>=3.0.0
+google-auth>=2.0.0
+db-dtypes>=1.4.0
+
+# Local dbt development only (not required on Streamlit Cloud)
+dbt-core>=1.11.0,<2.0.0
+dbt-bigquery>=1.11.0,<2.0.0

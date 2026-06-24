@@ -5,6 +5,7 @@ import pandas as pd
 import streamlit as st
 import streamlit.components.v1 as components
 
+from case_study import render_case_study_tab
 from charts import (
     build_country_bar_chart,
     build_country_channel_heatmap,
@@ -27,6 +28,7 @@ from data import (
     compute_wholesale_kpis,
     analytics_data_source_label,
     clamp_period,
+    using_cached_data,
     data_bounds,
     filter_data,
     filter_wholesale_data,
@@ -833,27 +835,27 @@ def render_insights_footer(
 
 
 @st.cache_data(ttl=600)
-def get_wholesale_data(_schema_version: int = 3):
+def get_wholesale_data(_schema_version: int = 5):
     return load_wholesale_performance()
 
 
 @st.cache_data(ttl=600)
-def get_data_quality_summary(_schema_version: int = 3):
+def get_data_quality_summary(_schema_version: int = 5):
     return load_data_quality_summary()
 
 
 @st.cache_data(ttl=600)
-def get_data_quality_detail(issue_type: str, limit: int = 100, _schema_version: int = 3):
+def get_data_quality_detail(issue_type: str, limit: int = 100, _schema_version: int = 5):
     return load_data_quality_detail(issue_type, limit=limit)
 
 
 @st.cache_data(ttl=600)
-def get_channel_data(granularity: str = "month", _schema_version: int = 3):
+def get_channel_data(granularity: str = "month", _schema_version: int = 5):
     return load_channel_performance(granularity)
 
 
 @st.cache_data(ttl=600)
-def get_country_data(granularity: str = "month", _schema_version: int = 3):
+def get_country_data(granularity: str = "month", _schema_version: int = 5):
     return load_country_performance(granularity)
 
 
@@ -875,11 +877,20 @@ try:
     country_meta = get_country_data("month")
     wholesale_meta = get_wholesale_data()
 except Exception as exc:
-    st.error("Could not load data from BigQuery.")
+    st.error("Could not load dashboard data.")
     st.code(str(exc))
-    st.caption("If this is an auth issue, run `gcloud auth application-default login`.")
+    st.caption(
+        "For Streamlit Cloud without GCP: set env `DASHBOARD_DATA_SOURCE=cache` "
+        "and commit `dashboard/cache/*.parquet` (run `python dashboard/export_cache.py` locally)."
+    )
     st.exception(exc)
     st.stop()
+
+if using_cached_data():
+    st.info(
+        "Running on **cached snapshot** (`dashboard/cache`) — no BigQuery credentials required. "
+        "Data is a fixed export; refresh locally with `python dashboard/export_cache.py`."
+    )
 
 if "period_preset" not in st.session_state:
     st.session_state["period_preset"] = "last_1_year"
@@ -895,11 +906,20 @@ try:
     country_df = get_country_data("month")
     wholesale_df = get_wholesale_data()
 except Exception as exc:
-    st.error("Could not load data from BigQuery.")
+    st.error("Could not load dashboard data.")
     st.code(str(exc))
-    st.caption("If this is an auth issue, run `gcloud auth application-default login`.")
+    st.caption(
+        "For Streamlit Cloud without GCP: set env `DASHBOARD_DATA_SOURCE=cache` "
+        "and commit `dashboard/cache/*.parquet` (run `python dashboard/export_cache.py` locally)."
+    )
     st.exception(exc)
     st.stop()
+
+if using_cached_data():
+    st.info(
+        "Running on **cached snapshot** (`dashboard/cache`) — no BigQuery credentials required. "
+        "Data is a fixed export; refresh locally with `python dashboard/export_cache.py`."
+    )
 
 min_date, max_date = picker_date_bounds(df, country_df)
 channel_min_date, channel_max_date = data_bounds(df_meta)
@@ -1133,8 +1153,8 @@ with c5:
 
 render_channel_legend(selected_channels)
 
-tab_channels, tab_countries, tab_table, tab_quality = st.tabs(
-    ["Channels", "Countries", "Data tables", "Data quality"],
+tab_channels, tab_countries, tab_table, tab_quality, tab_case = st.tabs(
+    ["Channels", "Countries", "Data tables", "Data quality", "Case study"],
 )
 
 with tab_channels:
@@ -1248,3 +1268,12 @@ with tab_table:
 
 with tab_quality:
     render_data_quality_tab()
+
+with tab_case:
+    case_wholesale = filter_wholesale_data(
+        wholesale_df,
+        start_date=start_date,
+        end_date=end_date,
+        countries=selected_countries,
+    )
+    render_case_study_tab(filtered, case_wholesale)

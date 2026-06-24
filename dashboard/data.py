@@ -2,8 +2,7 @@ from __future__ import annotations
 
 import json
 import os
-import shutil
-import subprocess
+from pathlib import Path
 
 import pandas as pd
 
@@ -108,63 +107,138 @@ NUMERIC_COLS = [
 ]
 
 
-def _find_bq_executable() -> str:
-    for candidate in (
-        shutil.which("bq"),
-        shutil.which("bq.cmd"),
-        os.path.join(
-            os.environ.get("LOCALAPPDATA", ""),
-            "Google",
-            "Cloud SDK",
-            "google-cloud-sdk",
-            "bin",
-            "bq.cmd",
-        ),
-    ):
-        if candidate and os.path.isfile(candidate):
-            return candidate
-    raise RuntimeError("bq CLI not found. Install Google Cloud SDK and ensure bq is on PATH.")
+CACHE_DIR = Path(__file__).resolve().parent / "cache"
 
-
-BQ_EXECUTABLE = _find_bq_executable()
-
+_bq_client = None
 _datamart_ready: bool | None = None
+_data_source_resolved: str | None = None
 
 
-def _run_bq_query(query: str) -> pd.DataFrame:
-    result = subprocess.run(
-        [
-            BQ_EXECUTABLE,
-            "query",
-            "--use_legacy_sql=false",
-            "--format=json",
-            "--quiet",
-            "--max_rows=1000000",
-        ],
-        input=query,
-        capture_output=True,
-        text=True,
-        check=False,
+def _cache_bundle_ok() -> bool:
+    required = (
+        "channel_monthly.parquet",
+        "country_monthly.parquet",
+        "wholesale_monthly.parquet",
     )
-    if result.returncode != 0:
-        detail = (result.stderr or result.stdout or "").strip()
-        raise RuntimeError(detail or "BigQuery query failed") from None
-    rows = json.loads(result.stdout or "[]")
-    df = pd.DataFrame(rows)
+    return all((CACHE_DIR / name).is_file() for name in required)
 
+
+def _configured_data_source() -> str:
+    env = os.environ.get("DASHBOARD_DATA_SOURCE", "").strip().lower()
+    if env in ("cache", "bq", "auto"):
+        return env
+    try:
+        import streamlit as st
+        if hasattr(st, "secrets"):
+            if "DASHBOARD_DATA_SOURCE" in st.secrets:
+                value = str(st.secrets["DASHBOARD_DATA_SOURCE"]).strip().lower()
+                if value in ("cache", "bq", "auto"):
+                    return value
+            if "dashboard" in st.secrets and "data_source" in st.secrets["dashboard"]:
+                value = str(st.secrets["dashboard"]["data_source"]).strip().lower()
+                if value in ("cache", "bq", "auto"):
+                    return value
+    except Exception:
+        pass
+    return "auto"
+
+
+def using_cached_data() -> bool:
+    global _data_source_resolved
+    mode = _configured_data_source()
+    if mode == "cache":
+        return True
+    if mode == "bq":
+        return False
+    if _data_source_resolved == "cache":
+        return True
+    if _data_source_resolved == "bq":
+        return False
+    if _cache_bundle_ok():
+        try:
+            _run_bq_query("SELECT 1 AS ok")
+            _data_source_resolved = "bq"
+            return False
+        except Exception:
+            _data_source_resolved = "cache"
+            return True
+    _data_source_resolved = "bq"
+    return False
+
+
+def _normalize_dataframe(df: pd.DataFrame) -> pd.DataFrame:
     for col in NUMERIC_COLS:
         if col in df.columns:
             df[col] = pd.to_numeric(df[col], errors="coerce")
-
     if "period_month" in df.columns:
         df["period_month"] = pd.to_datetime(df["period_month"])
     if "period_date" in df.columns:
         df["period_date"] = pd.to_datetime(df["period_date"])
-
     return df
 
 
+def _read_cache(name: str) -> pd.DataFrame:
+    path = CACHE_DIR / f"{name}.parquet"
+    if not path.is_file():
+        raise FileNotFoundError(f"Missing cache file: {path}")
+    return _normalize_dataframe(pd.read_parquet(path))
+
+
+def _credentials_from_streamlit_secrets():
+    try:
+        import streamlit as st
+    except Exception:
+        return None
+    try:
+        if hasattr(st, "secrets") and "gcp_service_account" in st.secrets:
+            from google.oauth2 import service_account
+            return service_account.Credentials.from_service_account_info(
+                dict(st.secrets["gcp_service_account"])
+            )
+    except Exception:
+        return None
+    return None
+
+
+def _credentials_from_env():
+    try:
+        from google.oauth2 import service_account
+    except ImportError:
+        return None
+    raw_json = os.environ.get("GCP_SERVICE_ACCOUNT_JSON")
+    if raw_json:
+        return service_account.Credentials.from_service_account_info(
+            json.loads(raw_json)
+        )
+    creds_path = os.environ.get("GOOGLE_APPLICATION_CREDENTIALS")
+    if creds_path and os.path.isfile(creds_path):
+        return service_account.Credentials.from_service_account_file(creds_path)
+    return None
+
+
+def _get_bq_client():
+    global _bq_client
+    if _bq_client is not None:
+        return _bq_client
+    from google.cloud import bigquery
+    credentials = _credentials_from_streamlit_secrets() or _credentials_from_env()
+    if credentials is not None:
+        _bq_client = bigquery.Client(credentials=credentials, project=PROJECT_ID)
+    else:
+        _bq_client = bigquery.Client(project=PROJECT_ID)
+    return _bq_client
+
+
+def _run_bq_query(query: str) -> pd.DataFrame:
+    from google.cloud import bigquery
+    job_config = bigquery.QueryJobConfig(use_legacy_sql=False)
+    df = _get_bq_client().query(query, job_config=job_config).to_dataframe()
+    return _normalize_dataframe(df)
+
+
 def datamart_available() -> bool:
+    if using_cached_data():
+        return False
     global _datamart_ready
     if _datamart_ready is not None:
         return _datamart_ready
@@ -182,6 +256,8 @@ def datamart_available() -> bool:
 
 
 def analytics_data_source_label() -> str:
+    if using_cached_data():
+        return "dashboard/cache (snapshot — no live BigQuery)"
     if datamart_available():
         return f"{PROJECT_ID}.{DATAMART_DATASET}"
     return f"{PROJECT_ID}.{SOURCE_DATASET} (inline gold DQ filters)"
@@ -199,6 +275,14 @@ def _rename_period_column(df: pd.DataFrame, target_col: str) -> pd.DataFrame:
 
 
 def load_channel_performance(granularity: str = "month") -> pd.DataFrame:
+    if using_cached_data():
+        key = {"month": "channel_monthly", "day": "channel_daily", "week": "channel_weekly"}[granularity]
+        df = _read_cache(key)
+        if granularity == "day":
+            return _rename_period_column(df, "period_day")
+        if granularity == "week":
+            return _rename_period_column(df, "period_week")
+        return df
     if granularity == "day":
         query = _pick_query(CHANNEL_DAILY_QUERY, CHANNEL_DAILY_FALLBACK_QUERY)
         return _rename_period_column(_run_bq_query(query), "period_day")
@@ -210,7 +294,14 @@ def load_channel_performance(granularity: str = "month") -> pd.DataFrame:
 
 
 def load_country_performance(granularity: str = "month") -> pd.DataFrame:
-    if granularity == "day":
+    if using_cached_data():
+        key = {"month": "country_monthly", "day": "country_daily", "week": "country_weekly"}[granularity]
+        df = _read_cache(key)
+        if granularity == "day":
+            df = _rename_period_column(df, "period_day")
+        elif granularity == "week":
+            df = _rename_period_column(df, "period_week")
+    elif granularity == "day":
         query = _pick_query(COUNTRY_DAILY_QUERY, COUNTRY_DAILY_FALLBACK_QUERY)
         df = _rename_period_column(_run_bq_query(query), "period_day")
     elif granularity == "week":
@@ -225,8 +316,11 @@ def load_country_performance(granularity: str = "month") -> pd.DataFrame:
 
 
 def load_wholesale_performance() -> pd.DataFrame:
-    query = _pick_query(WHOLESALE_PERFORMANCE_QUERY, WHOLESALE_PERFORMANCE_FALLBACK_QUERY)
-    df = _run_bq_query(query)
+    if using_cached_data():
+        df = _read_cache("wholesale_monthly")
+    else:
+        query = _pick_query(WHOLESALE_PERFORMANCE_QUERY, WHOLESALE_PERFORMANCE_FALLBACK_QUERY)
+        df = _run_bq_query(query)
     df["country_name"] = df["country"].map(COUNTRY_NAME_MAP).fillna(df["country"])
     df["iso_alpha"] = df["country"].map(ISO3_MAP).fillna(df["country"])
     return df
@@ -355,8 +449,11 @@ def _enrich_data_quality_detail(df: pd.DataFrame, issue_type: str) -> pd.DataFra
 
 
 def load_data_quality_summary() -> pd.DataFrame:
-    query = DATA_QUALITY_SUMMARY_QUERY.format(project=PROJECT_ID)
-    df = _run_bq_query(query)
+    if using_cached_data():
+        df = _read_cache("data_quality_summary")
+    else:
+        query = DATA_QUALITY_SUMMARY_QUERY.format(project=PROJECT_ID)
+        df = _run_bq_query(query)
     if "pct_of_table" in df.columns:
         df["pct_of_table"] = pd.to_numeric(df["pct_of_table"], errors="coerce")
     if "row_count" in df.columns:
@@ -365,11 +462,19 @@ def load_data_quality_summary() -> pd.DataFrame:
 
 
 def load_data_quality_detail(issue_type: str, limit: int = 100) -> pd.DataFrame:
-    query_template = DATA_QUALITY_DETAIL_QUERIES.get(issue_type)
-    if not query_template:
-        return pd.DataFrame()
-    query = query_template.format(project=PROJECT_ID, limit=limit)
-    df = _run_bq_query(query)
+    if using_cached_data():
+        path = CACHE_DIR / "data_quality_detail" / f"{issue_type}.parquet"
+        if not path.is_file():
+            return pd.DataFrame()
+        df = _normalize_dataframe(pd.read_parquet(path))
+        if limit and len(df) > limit:
+            df = df.head(limit)
+    else:
+        query_template = DATA_QUALITY_DETAIL_QUERIES.get(issue_type)
+        if not query_template:
+            return pd.DataFrame()
+        query = query_template.format(project=PROJECT_ID, limit=limit)
+        df = _run_bq_query(query)
     for col in ("gross_sale", "net_sales", "quantity_sold", "quantity_returned", "shipping_cost", "cost", "base_price"):
         if col in df.columns:
             df[col] = pd.to_numeric(df[col], errors="coerce")
