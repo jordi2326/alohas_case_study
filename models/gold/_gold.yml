@@ -1,0 +1,14 @@
+version: 2
+
+models:
+  - name: gold_dim_product
+    description: >
+      Product catalog with rows where cost is null removed (data quality filter).
+  - name: gold_fct_shipment
+    description: >
+      Shipments with rows where country is null removed (data quality filter).
+  - name: gold_fct_sale_order_line
+    description: >
+      Order lines passing referential and business-rule checks: valid SKU in
+      dim_product, valid shipment_id in fct_shipment, quantity_sold > 0,
+      quantity_returned <= quantity_sold, and net_sales >= 0.

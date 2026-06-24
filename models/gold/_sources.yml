@@ -1,0 +1,61 @@
+version: 2
+
+sources:
+  - name: production
+    description: Raw production tables in BigQuery
+    database: alohas-recruiting-study-case
+    schema: production
+    tables:
+      - name: dim_product
+        description: Product dimension with SKU, pricing, and category
+        columns:
+          - name: sku
+            description: Unique product identifier
+            tests:
+              - unique
+              - not_null
+          - name: name
+            description: Product display name
+          - name: category
+            description: Product category
+          - name: base_price
+            description: List price before discounts
+          - name: cost
+            description: Unit cost
+
+      - name: fct_sale_order_line
+        description: Sale order line facts, partitioned by created_at
+        columns:
+          - name: channel
+            description: Sales channel
+          - name: sku
+            description: Product SKU sold
+          - name: shipment_id
+            description: Foreign key to shipment
+          - name: quantity_sold
+            description: Units sold
+          - name: quantity_returned
+            description: Units returned
+          - name: gross_sale
+            description: Gross sale amount
+          - name: taxes
+            description: Tax amount
+          - name: net_sales
+            description: Net sales after returns and taxes
+          - name: created_at
+            description: Order line creation timestamp
+
+      - name: fct_shipment
+        description: Shipment facts with shipping method and destination
+        columns:
+          - name: shipment_id
+            description: Unique shipment identifier
+            tests:
+              - unique
+              - not_null
+          - name: shipping_method
+            description: Carrier or delivery method
+          - name: shipping_cost
+            description: Cost of shipping
+          - name: country
+            description: Destination country

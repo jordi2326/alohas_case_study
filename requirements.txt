@@ -1,0 +1,16 @@
+dbt-core>=1.11.0,<2.0.0
+
+dbt-bigquery>=1.11.0,<2.0.0
+
+pandas>=2.2.0
+
+google-cloud-bigquery>=3.0.0
+
+db-dtypes>=1.4.0
+
+streamlit>=1.44.0
+
+plotly>=6.0.0
+
+matplotlib>=3.8.0
+

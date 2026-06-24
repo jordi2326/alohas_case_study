@@ -1,0 +1,163 @@
+version: 2
+
+models:
+  - name: fct_sales_enriched
+    description: >
+      One row per order line (one SKU per shipment line). A single shipment
+      can contain multiple order lines / products. shipping_cost is the full
+      shipment cost; use allocated_shipping_cost when aggregating.
+      Rows failing source data quality checks are excluded in the gold layer
+      (orphan SKU/shipment, null cost/country, invalid quantities or net sales).
+    columns:
+      - name: channel
+        description: Sales channel
+      - name: sku
+        description: Product SKU
+      - name: product_name
+        description: Product display name
+      - name: category
+        description: Product category
+      - name: base_price
+        description: List price before discounts
+      - name: cost
+        description: Unit product cost
+      - name: shipment_id
+        description: Shipment identifier
+      - name: shipping_method
+        description: Carrier or delivery method
+      - name: shipping_cost
+        description: Full shipment shipping cost (same value on all lines in a shipment — do not sum directly)
+      - name: allocated_shipping_cost
+        description: Line's share of shipping cost, proportional to net_sales within the shipment
+      - name: country
+        description: Destination country
+      - name: quantity_sold
+        description: Units sold
+      - name: quantity_returned
+        description: Units returned
+      - name: gross_sale
+        description: Gross sale amount
+      - name: taxes
+        description: Tax amount
+      - name: net_sales
+        description: Net sales after returns and taxes
+      - name: created_at
+        description: Order line creation timestamp
+
+  - name: mart_channel_performance_monthly
+    description: >
+      Monthly channel performance scorecard for leadership. Compares net sales,
+      return rate, contribution margin, channel mix, and year-over-year trends
+      at month x channel grain.
+    columns:
+      - name: period_month
+        description: First day of the calendar month
+        tests:
+          - not_null
+      - name: channel
+        description: Sales channel
+        tests:
+          - not_null
+      - name: net_sales
+        description: Realized revenue after returns and taxes
+      - name: gross_sale
+        description: Gross sale amount before adjustments
+      - name: quantity_sold
+        description: Total units sold
+      - name: quantity_returned
+        description: Total units returned
+      - name: return_rate
+        description: quantity_returned / quantity_sold
+      - name: avg_order_value
+        description: net_sales / quantity_sold
+      - name: product_cost
+        description: Sum of unit cost x quantity sold
+      - name: shipping_cost
+        description: Total shipping cost (deduplicated per shipment)
+      - name: contribution_margin
+        description: net_sales - product_cost - shipping_cost
+      - name: contribution_margin_pct
+        description: contribution_margin / net_sales
+      - name: pct_of_total_net_sales
+        description: Channel share of total net sales in the month
+      - name: net_sales_yoy_pct
+        description: Year-over-year net sales growth rate
+      - name: return_rate_yoy_pp
+        description: Year-over-year change in return rate (percentage points)
+      - name: contribution_margin_pct_yoy_pp
+        description: Year-over-year change in contribution margin rate (percentage points)
+    tests:
+      - dbt_utils.unique_combination_of_columns:
+          arguments:
+            combination_of_columns:
+              - period_month
+              - channel
+
+  - name: mart_country_performance_monthly
+    description: >
+      Monthly country performance by channel for geographic dashboards.
+      Supports net sales, returns, margin, mix within channel, and YoY trends
+      at month x channel x country grain.
+    columns:
+      - name: period_month
+        description: First day of the calendar month
+        tests:
+          - not_null
+      - name: channel
+        description: Sales channel
+        tests:
+          - not_null
+      - name: country
+        description: Destination country
+        tests:
+          - not_null
+      - name: net_sales
+        description: Realized revenue after returns and taxes
+      - name: return_rate
+        description: quantity_returned / quantity_sold
+      - name: contribution_margin
+        description: net_sales - product_cost - shipping_cost
+      - name: contribution_margin_pct
+        description: contribution_margin / net_sales
+      - name: pct_of_channel_net_sales
+        description: Share of channel net sales within the month
+      - name: net_sales_yoy_pct
+        description: Year-over-year net sales growth rate
+    tests:
+      - dbt_utils.unique_combination_of_columns:
+          arguments:
+            combination_of_columns:
+              - period_month
+              - channel
+              - country
+
+  - name: mart_wholesale_performance_monthly
+    description: >
+      Monthly wholesale performance by country and category. Intended for
+      wholesale leadership to monitor geo x product mix, returns, and margin.
+    columns:
+      - name: period_month
+        description: First day of the calendar month
+        tests:
+          - not_null
+      - name: country
+        description: Destination country
+      - name: category
+        description: Product category
+      - name: net_sales
+        description: Realized wholesale revenue after returns and taxes
+      - name: return_rate
+        description: quantity_returned / quantity_sold
+      - name: contribution_margin
+        description: net_sales - product_cost - shipping_cost
+      - name: pct_of_wholesale_net_sales
+        description: Share of wholesale net sales within the month
+      - name: net_sales_yoy_pct
+        description: Year-over-year net sales growth rate
+    tests:
+      - dbt_utils.unique_combination_of_columns:
+          arguments:
+            combination_of_columns:
+              - period_month
+              - country
+              - category

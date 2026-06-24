@@ -1,0 +1,29 @@
+name: 'alohas_case_studio'
+version: '1.0.0'
+config-version: 2
+
+profile: 'alohas_case_studio'
+
+model-paths: ["models"]
+analysis-paths: ["analyses"]
+test-paths: ["tests"]
+seed-paths: ["seeds"]
+macro-paths: ["macros"]
+snapshot-paths: ["snapshots"]
+
+clean-targets:
+  - "target"
+  - "dbt_packages"
+
+models:
+  alohas_case_studio:
+    gold:
+      +materialized: view
+      +schema: gold
+    datamart:
+      +materialized: table
+      +schema: datamart
+
+vars:
+  source_project: alohas-recruiting-study-case
+  source_dataset: production
