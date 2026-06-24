@@ -1,0 +1,33 @@
+---
+description: Do not show a derived current view in the returns schema
+globs: dashboard/**/*.py
+alwaysApply: false
+---
+
+# Returns Schema Rule
+
+When editing the case study returns model or Q2 Returns tab:
+
+- Do **not** add or show `fct_sale_order_line_current`.
+- Do **not** draw a derived/current view box in the UML.
+- Do **not** describe the proposed model as requiring a stored current view.
+- The proposed returns model should show only:
+  - `dim_product`
+  - `dim_shipment`
+  - `fct_sale_order_line_snapshot`
+  - `fct_return_event`
+
+Current returned quantity and current net sales should be explained as a **reporting/query-time rollup**:
+
+```sql
+snapshot + sum(return_event.quantity_returned_delta)
+snapshot.net_sales_at_sale + sum(return_event.net_sales_delta)
+```
+
+Business explanation:
+
+- `created_at` / `sold_at` tells when the customer bought.
+- `returned_at` tells when the product came back.
+- `net_sales_delta` tells how much revenue to subtract.
+- Stock is attributed to `returned_at`.
+- Net revenue and margin are attributed back to the original purchase period.

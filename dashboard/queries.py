@@ -220,35 +220,8 @@ order by period_date, channel
 """
 
 _CHANNEL_GRAIN_QUERY = f"""
-with sales as (
-    select
-        channel,
-        {{period_expr}} as period_date,
-        quantity_sold,
-        quantity_returned,
-        gross_sale,
-        taxes,
-        net_sales,
-        cost,
-        allocated_shipping_cost
-    from {FCT_SALES_ENRICHED_TABLE}
-),
-line_agg as (
-    select
-        period_date,
-        channel,
-        sum(gross_sale) as gross_sale,
-        sum(taxes) as taxes,
-        sum(net_sales) as net_sales,
-        sum(quantity_sold) as quantity_sold,
-        sum(quantity_returned) as quantity_returned,
-        sum(quantity_sold * cost) as product_cost,
-        sum(coalesce(allocated_shipping_cost, 0)) as shipping_cost
-    from sales
-    group by period_date, channel
-)
 select
-    period_date,
+    {{period_column}} as period_date,
     channel,
     gross_sale,
     taxes,
@@ -263,19 +236,21 @@ select
     safe_divide(net_sales - product_cost - shipping_cost, net_sales) as contribution_margin_pct,
     safe_divide(
         net_sales,
-        sum(net_sales) over (partition by period_date)
+        sum(net_sales) over (partition by {{period_column}})
     ) as pct_of_total_net_sales
-from line_agg
+from `{{project}}.{DATAMART_DATASET}.{{table_name}}`
 order by period_date, channel
 """
 
 CHANNEL_DAILY_QUERY = _CHANNEL_GRAIN_QUERY.format(
     project="{project}",
-    period_expr="date(date_trunc(created_at, day))",
+    period_column="period_day",
+    table_name="mart_channel_performance_daily",
 )
 CHANNEL_WEEKLY_QUERY = _CHANNEL_GRAIN_QUERY.format(
     project="{project}",
-    period_expr="date(date_trunc(created_at, week(monday)))",
+    period_column="period_week",
+    table_name="mart_channel_performance_weekly",
 )
 CHANNEL_DAILY_FALLBACK_QUERY = _CHANNEL_GRAIN_FALLBACK.format(
     project="{project}",
@@ -341,37 +316,8 @@ order by period_date, channel, country
 """
 
 _COUNTRY_GRAIN_QUERY = f"""
-with sales as (
-    select
-        channel,
-        country,
-        {{period_expr}} as period_date,
-        quantity_sold,
-        quantity_returned,
-        gross_sale,
-        taxes,
-        net_sales,
-        cost,
-        allocated_shipping_cost
-    from {FCT_SALES_ENRICHED_TABLE}
-),
-line_agg as (
-    select
-        period_date,
-        channel,
-        country,
-        sum(gross_sale) as gross_sale,
-        sum(taxes) as taxes,
-        sum(net_sales) as net_sales,
-        sum(quantity_sold) as quantity_sold,
-        sum(quantity_returned) as quantity_returned,
-        sum(quantity_sold * cost) as product_cost,
-        sum(coalesce(allocated_shipping_cost, 0)) as shipping_cost
-    from sales
-    group by period_date, channel, country
-)
 select
-    period_date,
+    {{period_column}} as period_date,
     channel,
     country,
     gross_sale,
@@ -387,19 +333,21 @@ select
     safe_divide(net_sales - product_cost - shipping_cost, net_sales) as contribution_margin_pct,
     safe_divide(
         net_sales,
-        sum(net_sales) over (partition by period_date, channel)
+        sum(net_sales) over (partition by {{period_column}}, channel)
     ) as pct_of_channel_net_sales
-from line_agg
+from `{{project}}.{DATAMART_DATASET}.{{table_name}}`
 order by period_date, channel, country
 """
 
 COUNTRY_DAILY_QUERY = _COUNTRY_GRAIN_QUERY.format(
     project="{project}",
-    period_expr="date(date_trunc(created_at, day))",
+    period_column="period_day",
+    table_name="mart_country_performance_daily",
 )
 COUNTRY_WEEKLY_QUERY = _COUNTRY_GRAIN_QUERY.format(
     project="{project}",
-    period_expr="date(date_trunc(created_at, week(monday)))",
+    period_column="period_week",
+    table_name="mart_country_performance_weekly",
 )
 COUNTRY_DAILY_FALLBACK_QUERY = _COUNTRY_GRAIN_FALLBACK.format(
     project="{project}",
@@ -594,6 +542,83 @@ select
     ) as pct_of_wholesale_net_sales
 from combined
 order by period_month, country, category
+"""
+)
+
+CATEGORY_COUNTRY_CHANNEL_DATAMART_QUERY = f"""
+select *
+from `{{project}}.{DATAMART_DATASET}.mart_country_channel_category_performance_monthly`
+order by period_month, country, channel, category
+"""
+
+CATEGORY_COUNTRY_CHANNEL_QUERY = (
+    "with "
+    + FCT_SALES_ENRICHED_INLINE_CTES
+    + """,
+sales as (
+    select
+        date(date_trunc(created_at, month)) as period_month,
+        country,
+        channel,
+        category,
+        quantity_sold,
+        quantity_returned,
+        gross_sale,
+        taxes,
+        net_sales,
+        cost,
+        allocated_shipping_cost
+    from fct_sales_enriched
+),
+line_agg as (
+    select
+        period_month,
+        country,
+        channel,
+        category,
+        sum(gross_sale) as gross_sale,
+        sum(taxes) as taxes,
+        sum(net_sales) as net_sales,
+        sum(quantity_sold) as quantity_sold,
+        sum(quantity_returned) as quantity_returned,
+        sum(quantity_sold * cost) as product_cost,
+        sum(coalesce(allocated_shipping_cost, 0)) as shipping_cost
+    from sales
+    group by period_month, country, channel, category
+),
+combined as (
+    select
+        period_month,
+        country,
+        channel,
+        category,
+        gross_sale,
+        taxes,
+        net_sales,
+        quantity_sold,
+        quantity_returned,
+        product_cost,
+        shipping_cost,
+        net_sales - product_cost - shipping_cost as contribution_margin
+    from line_agg
+)
+select
+    period_month,
+    country,
+    channel,
+    category,
+    gross_sale,
+    taxes,
+    net_sales,
+    quantity_sold,
+    quantity_returned,
+    product_cost,
+    shipping_cost,
+    contribution_margin,
+    safe_divide(quantity_returned, quantity_sold) as return_rate,
+    safe_divide(contribution_margin, net_sales) as contribution_margin_pct
+from combined
+order by period_month, country, channel, category
 """
 )
 

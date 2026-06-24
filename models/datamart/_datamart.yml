@@ -11,18 +11,28 @@ models:
     columns:
       - name: channel
         description: Sales channel
+        tests:
+          - not_null
       - name: sku
         description: Product SKU
+        tests:
+          - not_null
       - name: product_name
         description: Product display name
       - name: category
         description: Product category
+        tests:
+          - not_null
       - name: base_price
         description: List price before discounts
       - name: cost
         description: Unit product cost
+        tests:
+          - not_null
       - name: shipment_id
         description: Shipment identifier
+        tests:
+          - not_null
       - name: shipping_method
         description: Carrier or delivery method
       - name: shipping_cost
@@ -31,18 +41,28 @@ models:
         description: Line's share of shipping cost, proportional to net_sales within the shipment
       - name: country
         description: Destination country
+        tests:
+          - not_null
       - name: quantity_sold
         description: Units sold
+        tests:
+          - not_null
       - name: quantity_returned
         description: Units returned
+        tests:
+          - not_null
       - name: gross_sale
         description: Gross sale amount
       - name: taxes
         description: Tax amount
       - name: net_sales
         description: Net sales after returns and taxes
+        tests:
+          - not_null
       - name: created_at
         description: Order line creation timestamp
+        tests:
+          - not_null
 
   - name: mart_channel_performance_monthly
     description: >
@@ -93,6 +113,62 @@ models:
               - period_month
               - channel
 
+  - name: mart_channel_performance_daily
+    description: >
+      Daily channel performance for short-range dashboard presets and chart
+      drilldowns at day x channel grain.
+    columns:
+      - name: period_day
+        description: Calendar day
+        tests:
+          - not_null
+      - name: channel
+        description: Sales channel
+        tests:
+          - not_null
+      - name: net_sales
+        description: Realized revenue after returns and taxes
+      - name: return_rate
+        description: quantity_returned / quantity_sold
+      - name: contribution_margin_pct
+        description: contribution_margin / net_sales
+      - name: pct_of_total_net_sales
+        description: Channel share of total net sales in the day
+    tests:
+      - dbt_utils.unique_combination_of_columns:
+          arguments:
+            combination_of_columns:
+              - period_day
+              - channel
+
+  - name: mart_channel_performance_weekly
+    description: >
+      Weekly channel performance for medium-range dashboard presets and chart
+      drilldowns at week x channel grain.
+    columns:
+      - name: period_week
+        description: Monday starting the calendar week
+        tests:
+          - not_null
+      - name: channel
+        description: Sales channel
+        tests:
+          - not_null
+      - name: net_sales
+        description: Realized revenue after returns and taxes
+      - name: return_rate
+        description: quantity_returned / quantity_sold
+      - name: contribution_margin_pct
+        description: contribution_margin / net_sales
+      - name: pct_of_total_net_sales
+        description: Channel share of total net sales in the week
+    tests:
+      - dbt_utils.unique_combination_of_columns:
+          arguments:
+            combination_of_columns:
+              - period_week
+              - channel
+
   - name: mart_country_performance_monthly
     description: >
       Monthly country performance by channel for geographic dashboards.
@@ -131,6 +207,72 @@ models:
               - channel
               - country
 
+  - name: mart_country_performance_daily
+    description: >
+      Daily country performance by channel for short-range country charts at
+      day x channel x country grain.
+    columns:
+      - name: period_day
+        description: Calendar day
+        tests:
+          - not_null
+      - name: channel
+        description: Sales channel
+        tests:
+          - not_null
+      - name: country
+        description: Destination country
+        tests:
+          - not_null
+      - name: net_sales
+        description: Realized revenue after returns and taxes
+      - name: return_rate
+        description: quantity_returned / quantity_sold
+      - name: contribution_margin_pct
+        description: contribution_margin / net_sales
+      - name: pct_of_channel_net_sales
+        description: Share of channel net sales within the day
+    tests:
+      - dbt_utils.unique_combination_of_columns:
+          arguments:
+            combination_of_columns:
+              - period_day
+              - channel
+              - country
+
+  - name: mart_country_performance_weekly
+    description: >
+      Weekly country performance by channel for medium-range country charts at
+      week x channel x country grain.
+    columns:
+      - name: period_week
+        description: Monday starting the calendar week
+        tests:
+          - not_null
+      - name: channel
+        description: Sales channel
+        tests:
+          - not_null
+      - name: country
+        description: Destination country
+        tests:
+          - not_null
+      - name: net_sales
+        description: Realized revenue after returns and taxes
+      - name: return_rate
+        description: quantity_returned / quantity_sold
+      - name: contribution_margin_pct
+        description: contribution_margin / net_sales
+      - name: pct_of_channel_net_sales
+        description: Share of channel net sales within the week
+    tests:
+      - dbt_utils.unique_combination_of_columns:
+          arguments:
+            combination_of_columns:
+              - period_week
+              - channel
+              - country
+
   - name: mart_wholesale_performance_monthly
     description: >
       Monthly wholesale performance by country and category. Intended for
@@ -142,8 +284,12 @@ models:
           - not_null
       - name: country
         description: Destination country
+        tests:
+          - not_null
       - name: category
         description: Product category
+        tests:
+          - not_null
       - name: net_sales
         description: Realized wholesale revenue after returns and taxes
       - name: return_rate
@@ -161,3 +307,94 @@ models:
               - period_month
               - country
               - category
+
+  - name: mart_country_channel_category_performance_monthly
+    description: >
+      Monthly all-channel performance by country, channel, and product category.
+      Powers the Countries & wholesale tab for category mix comparisons across
+      every sales channel.
+    columns:
+      - name: period_month
+        description: First day of the calendar month
+        tests:
+          - not_null
+      - name: country
+        description: Destination country
+        tests:
+          - not_null
+      - name: channel
+        description: Sales channel
+        tests:
+          - not_null
+      - name: category
+        description: Product category
+        tests:
+          - not_null
+      - name: net_sales
+        description: Realized revenue after returns and taxes
+      - name: gross_sale
+        description: Gross sale amount before adjustments
+      - name: quantity_sold
+        description: Total units sold
+      - name: quantity_returned
+        description: Total units returned
+      - name: return_rate
+        description: quantity_returned / quantity_sold
+      - name: product_cost
+        description: Sum of unit cost x quantity sold
+      - name: shipping_cost
+        description: Allocated shipping cost summed to the mart grain
+      - name: contribution_margin
+        description: net_sales - product_cost - shipping_cost
+      - name: contribution_margin_pct
+        description: contribution_margin / net_sales
+      - name: pct_of_channel_net_sales
+        description: Share of channel net sales within the month
+      - name: net_sales_yoy_pct
+        description: Year-over-year net sales growth rate
+      - name: return_rate_yoy_pp
+        description: Year-over-year change in return rate (percentage points)
+      - name: contribution_margin_pct_yoy_pp
+        description: Year-over-year change in contribution margin rate (percentage points)
+    tests:
+      - dbt_utils.unique_combination_of_columns:
+          arguments:
+            combination_of_columns:
+              - period_month
+              - country
+              - channel
+              - category
+
+unit_tests:
+  - name: test_fct_sales_enriched_allocates_shipping_by_net_sales
+    model: fct_sales_enriched
+    given:
+      - input: ref('gold_fct_sale_order_line')
+        rows:
+          - {channel: online, sku: SKU-1, shipment_id: SHIP-1, quantity_sold: 1, quantity_returned: 0, gross_sale: 120, taxes: 20, net_sales: 100, created_at: "2024-01-15 10:00:00"}
+          - {channel: online, sku: SKU-2, shipment_id: SHIP-1, quantity_sold: 2, quantity_returned: 1, gross_sale: 60, taxes: 10, net_sales: 50, created_at: "2024-01-15 10:00:00"}
+      - input: ref('gold_dim_product')
+        rows:
+          - {sku: SKU-1, name: Sneaker, category: Footwear, base_price: 120, cost: 40}
+          - {sku: SKU-2, name: Sandal, category: Footwear, base_price: 30, cost: 10}
+      - input: ref('gold_fct_shipment')
+        rows:
+          - {shipment_id: SHIP-1, shipping_method: standard, shipping_cost: 30, country: ES}
+    expect:
+      rows:
+        - {sku: SKU-1, shipment_id: SHIP-1, country: ES, allocated_shipping_cost: 20}
+        - {sku: SKU-2, shipment_id: SHIP-1, country: ES, allocated_shipping_cost: 10}
+
+  - name: test_mart_country_channel_category_performance_monthly_aggregates_metrics
+    model: mart_country_channel_category_performance_monthly
+    given:
+      - input: ref('fct_sales_enriched')
+        rows:
+          - {created_at: "2023-01-05 10:00:00", country: ES, channel: online, category: Footwear, quantity_sold: 2, quantity_returned: 1, gross_sale: 100, taxes: 10, net_sales: 90, cost: 20, allocated_shipping_cost: 5}
+          - {created_at: "2024-01-05 10:00:00", country: ES, channel: online, category: Footwear, quantity_sold: 3, quantity_returned: 1, gross_sale: 160, taxes: 20, net_sales: 140, cost: 30, allocated_shipping_cost: 10}
+          - {created_at: "2024-01-20 10:00:00", country: ES, channel: online, category: Footwear, quantity_sold: 1, quantity_returned: 0, gross_sale: 50, taxes: 5, net_sales: 45, cost: 15, allocated_shipping_cost: 5}
+          - {created_at: "2024-01-10 10:00:00", country: FR, channel: online, category: Apparel, quantity_sold: 1, quantity_returned: 0, gross_sale: 100, taxes: 10, net_sales: 90, cost: 30, allocated_shipping_cost: 5}
+    expect:
+      rows:
+        - {period_month: 2023-01-01, country: ES, channel: online, category: Footwear, net_sales: 90, quantity_sold: 2, quantity_returned: 1, product_cost: 40, shipping_cost: 5, contribution_margin: 45, return_rate: 0.5, contribution_margin_pct: 0.5, pct_of_channel_net_sales: 1}
+        - {period_month: 2024-01-01, country: ES, channel: online, category: Footwear, net_sales: 185, quantity_sold: 4, quantity_returned: 1, product_cost: 105, shipping_cost: 15, contribution_margin: 65, return_rate: 0.25, contribution_margin_pct: 0.35135135135135137, pct_of_channel_net_sales: 0.6727272727272727, net_sales_prior_year: 90, net_sales_yoy_pct: 1.0555555555555556}

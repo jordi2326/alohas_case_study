@@ -87,6 +87,20 @@ def _wholesale_category_totals_df(df: pd.DataFrame) -> pd.DataFrame:
     return grouped
 
 
+def _channel_totals_df(df: pd.DataFrame) -> pd.DataFrame:
+    grouped = df.groupby("channel", as_index=False).agg(
+        net_sales=("net_sales", "sum"),
+        quantity_sold=("quantity_sold", "sum"),
+        quantity_returned=("quantity_returned", "sum"),
+        contribution_margin=("contribution_margin", "sum"),
+    )
+    grouped["return_rate"] = grouped["quantity_returned"] / grouped["quantity_sold"]
+    grouped["contribution_margin_pct"] = (
+        grouped["contribution_margin"] / grouped["net_sales"]
+    )
+    return grouped
+
+
 def _format_period_point(value: pd.Timestamp, period_col: str) -> str:
     if period_col == "period_day":
         return value.strftime("%d %b %Y")
@@ -476,6 +490,116 @@ def build_wholesale_insights(
     neutrals.append(
         f"Wholesale view spans **{df['country_name'].nunique()} countries**, "
         f"**{df['category'].nunique()} categories**, "
+        f"**{df[period_col].nunique()} months** · map metric: **{metric_label}**."
+    )
+
+    return _cap(positives), _cap(negatives), _cap(neutrals)
+
+
+def build_all_channel_category_insights(
+    df: pd.DataFrame,
+    map_metric: str = "net_sales",
+) -> tuple[list[str], list[str], list[str]]:
+    positives: list[str] = []
+    negatives: list[str] = []
+    neutrals: list[str] = []
+
+    if df.empty:
+        return positives, negatives, neutrals
+
+    latest = latest_period(df)
+    if latest is None:
+        return positives, negatives, neutrals
+
+    period_col = "period_month"
+    latest_slice = df[df[period_col] == latest]
+    prior_slice = df[df[period_col] == prior_year_period(latest)]
+    period_label = _format_period_point(latest, period_col)
+    metric_label = _metric_label(map_metric)
+    higher_better = _higher_is_better(map_metric)
+
+    country_period = _country_totals_df(df)
+    category_period = _wholesale_category_totals_df(df)
+    channel_period = _channel_totals_df(df)
+
+    ranked_countries = country_period.sort_values(map_metric, ascending=not higher_better)
+    ranked_categories = category_period.sort_values(map_metric, ascending=not higher_better)
+    ranked_channels = channel_period.sort_values(map_metric, ascending=not higher_better)
+    if ranked_countries.empty or ranked_countries[map_metric].isna().all():
+        return positives, negatives, neutrals
+
+    top_country = ranked_countries.iloc[0]
+    bottom_country = ranked_countries.iloc[-1]
+    metric_total = country_period[map_metric].sum()
+
+    if map_metric == "return_rate":
+        positives.append(
+            f"**{top_country['country_name']}** has the lowest all-channel **{metric_label}** "
+            f"(**{_format_metric_value(map_metric, top_country[map_metric])}**)."
+        )
+        if bottom_country["return_rate"] >= 0.12:
+            negatives.append(
+                f"**{bottom_country['country_name']}** has the highest all-channel **{metric_label}** "
+                f"(**{_format_metric_value(map_metric, bottom_country[map_metric])}**)."
+            )
+    else:
+        share = top_country[map_metric] / metric_total if metric_total else 0
+        positives.append(
+            f"**{top_country['country_name']}** leads all-channel **{metric_label}** with "
+            f"**{_format_metric_value(map_metric, top_country[map_metric])}** "
+            f"(**{share:.0%}** of total)."
+        )
+
+    if not ranked_categories.empty:
+        top_category = ranked_categories.iloc[0]
+        positives.append(
+            f"**{top_category['category']}** is the top category on **{metric_label}** "
+            f"({_format_metric_value(map_metric, top_category[map_metric])})."
+        )
+
+    if not ranked_channels.empty:
+        top_channel = ranked_channels.iloc[0]
+        positives.append(
+            f"**{top_channel['channel'].title()}** is the strongest channel on **{metric_label}** "
+            f"({_format_metric_value(map_metric, top_channel[map_metric])})."
+        )
+
+    if map_metric != "return_rate":
+        worst_return = country_period.loc[country_period["return_rate"].idxmax()]
+        if worst_return["return_rate"] >= 0.12:
+            negatives.append(
+                f"**{worst_return['country_name']}** has the highest return rate "
+                f"(**{worst_return['return_rate']:.1%}**) across selected channels."
+            )
+
+    if not prior_slice.empty and not latest_slice.empty:
+        current_totals = _country_totals_df(latest_slice)
+        prior_totals = _country_totals_df(prior_slice)
+        merged = current_totals.merge(
+            prior_totals,
+            on="country_name",
+            how="inner",
+            suffixes=("_current", "_prior"),
+        )
+        if not merged.empty:
+            current_col = f"{map_metric}_current"
+            prior_col = f"{map_metric}_prior"
+            merged["yoy"] = merged.apply(
+                lambda row: yoy_pct(row[current_col], row[prior_col]),
+                axis=1,
+            )
+            merged = merged.dropna(subset=["yoy"])
+            if not merged.empty and higher_better:
+                decliner = merged.loc[merged["yoy"].idxmin()]
+                if decliner["yoy"] < -0.05:
+                    negatives.append(
+                        f"**{decliner['country_name']}** all-channel **{metric_label}** fell "
+                        f"**{decliner['yoy']:+.1%}** YoY in {period_label}."
+                    )
+
+    neutrals.append(
+        f"All-channel category view spans **{df['country_name'].nunique()} countries**, "
+        f"**{df['channel'].nunique()} channels**, **{df['category'].nunique()} categories**, "
         f"**{df[period_col].nunique()} months** · map metric: **{metric_label}**."
     )
 

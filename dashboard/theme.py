@@ -59,6 +59,7 @@ CHART_GUIDES = {
     "Wholesale country × category": "Net sales matrix of country × category for wholesale.",
     "Wholesale category trend": "Monthly wholesale performance trend split by product category.",
     "Wholesale table": "Monthly wholesale detail by country and category.",
+    "Channel rate comparison": "Compares weighted return rate and contribution margin % by channel for the selected countries, categories, and period.",
     "Data quality": "Summary of source data issues detected in production tables.",
 }
 
@@ -407,6 +408,19 @@ STREAMLIT_CSS = f"""
     text-overflow: ellipsis;
     white-space: nowrap;
   }}
+  .kpi-card-period .kpi-card-value {{
+    font-size: clamp(.95rem, 1.05vw, 1.15rem);
+    overflow: visible;
+    text-overflow: clip;
+    white-space: normal;
+    overflow-wrap: anywhere;
+  }}
+  .kpi-card-period .kpi-card-delta {{
+    overflow: visible;
+    text-overflow: clip;
+    white-space: normal;
+    overflow-wrap: anywhere;
+  }}
   .kpi-card-delta {{
     display: block;
     flex: 0 0 auto;
@@ -430,28 +444,43 @@ STREAMLIT_CSS = f"""
   .stTabs [data-baseweb="tab-list"] button {{
     color: #64748b !important;
   }}
+  [data-baseweb="tag"],
   div[data-testid="stSidebar"] [data-baseweb="tag"] {{
     background-color: {ACCENT} !important;
   }}
+  [data-baseweb="tag"] span,
   div[data-testid="stSidebar"] [data-baseweb="tag"] span {{
     color: #fff !important;
   }}
-  div[data-testid="stSidebar"] button[kind="primary"] {{
+  div[data-testid="stSidebar"] button[kind="primary"],
+  div[data-testid="stSidebar"] button[data-testid="stBaseButton-primary"],
+  div[data-testid="stSidebar"] [data-testid="stButton"] button[kind="primary"],
+  div[data-testid="stSidebar"] [data-testid="stButton"] button[data-testid="stBaseButton-primary"] {{
     background-color: {ACCENT} !important;
     border-color: {ACCENT} !important;
     color: #fff !important;
+    box-shadow: 0 .35rem .7rem rgba(13, 110, 253, .18) !important;
   }}
-  div[data-testid="stSidebar"] button[kind="primary"]:hover {{
+  div[data-testid="stSidebar"] button[kind="primary"]:hover,
+  div[data-testid="stSidebar"] button[data-testid="stBaseButton-primary"]:hover,
+  div[data-testid="stSidebar"] [data-testid="stButton"] button[kind="primary"]:hover,
+  div[data-testid="stSidebar"] [data-testid="stButton"] button[data-testid="stBaseButton-primary"]:hover {{
     background-color: #0b5ed7 !important;
     border-color: #0b5ed7 !important;
     color: #fff !important;
   }}
-  div[data-testid="stSidebar"] button[kind="secondary"] {{
+  div[data-testid="stSidebar"] button[kind="secondary"],
+  div[data-testid="stSidebar"] button[data-testid="stBaseButton-secondary"],
+  div[data-testid="stSidebar"] [data-testid="stButton"] button[kind="secondary"],
+  div[data-testid="stSidebar"] [data-testid="stButton"] button[data-testid="stBaseButton-secondary"] {{
     background-color: #fff !important;
     border: 1px solid #cbd5e1 !important;
     color: #475569 !important;
   }}
-  div[data-testid="stSidebar"] button[kind="secondary"]:hover {{
+  div[data-testid="stSidebar"] button[kind="secondary"]:hover,
+  div[data-testid="stSidebar"] button[data-testid="stBaseButton-secondary"]:hover,
+  div[data-testid="stSidebar"] [data-testid="stButton"] button[kind="secondary"]:hover,
+  div[data-testid="stSidebar"] [data-testid="stButton"] button[data-testid="stBaseButton-secondary"]:hover {{
     border-color: {ACCENT} !important;
     color: {ACCENT} !important;
     background-color: #eff6ff !important;

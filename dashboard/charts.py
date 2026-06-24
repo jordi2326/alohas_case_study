@@ -193,6 +193,76 @@ def build_margin_chart(df):
     return _apply_layout(fig, "Contribution margin % by channel")
 
 
+def build_channel_rate_comparison(df):
+    if df.empty:
+        fig = go.Figure()
+        fig.update_layout(
+            title="Margin % and return rate by channel",
+            annotations=[{
+                "text": "No channel data for the selected filters.",
+                "xref": "paper", "yref": "paper", "x": 0.5, "y": 0.5,
+                "showarrow": False, "font": {"size": 14, "color": "#64748b"},
+            }],
+        )
+        return _apply_layout(fig, "Margin % and return rate by channel")
+
+    grouped = (
+        df.groupby("channel", as_index=False)
+        .agg(
+            net_sales=("net_sales", "sum"),
+            quantity_sold=("quantity_sold", "sum"),
+            quantity_returned=("quantity_returned", "sum"),
+            contribution_margin=("contribution_margin", "sum"),
+        )
+        .sort_values("net_sales", ascending=False)
+    )
+    grouped["return_rate"] = grouped["quantity_returned"] / grouped["quantity_sold"]
+    grouped["contribution_margin_pct"] = (
+        grouped["contribution_margin"] / grouped["net_sales"]
+    )
+    channel_order = grouped["channel"].tolist()
+    colors = channel_color_map(channel_order)
+    long_df = grouped.melt(
+        id_vars=["channel"],
+        value_vars=["return_rate", "contribution_margin_pct"],
+        var_name="metric",
+        value_name="value",
+    )
+    long_df["metric_label"] = long_df["metric"].map({
+        "return_rate": "Return rate",
+        "contribution_margin_pct": "Margin %",
+    })
+    long_df["value_display"] = long_df["value"].map(lambda value: f"{value:.1%}")
+
+    fig = px.bar(
+        long_df,
+        x="channel",
+        y="value",
+        color="channel",
+        facet_col="metric_label",
+        title="Margin % and return rate by channel",
+        labels={"channel": "Channel", "value": "Rate", "metric_label": ""},
+        color_discrete_map=colors,
+        category_orders={
+            "channel": channel_order,
+            "metric_label": ["Return rate", "Margin %"],
+        },
+        custom_data=["value_display"],
+    )
+    fig.update_yaxes(tickformat=".1%")
+    fig.update_xaxes(title="")
+    fig.update_layout(
+        showlegend=True,
+        legend_title_text="Channel",
+        bargap=0.28,
+    )
+    fig.update_traces(
+        hovertemplate="<b>%{x}</b><br>%{customdata[0]}<extra></extra>",
+    )
+    fig.for_each_annotation(lambda annotation: annotation.update(text=annotation.text.split("=")[-1]))
+    return _apply_layout(fig, "Margin % and return rate by channel")
+
+
 def build_world_map_heatmap(df, metric: str = "net_sales"):
     map_df = aggregate_countries(df, metric=metric)
     label = MAP_METRIC_OPTIONS.get(metric, metric)
@@ -210,30 +280,40 @@ def build_world_map_heatmap(df, metric: str = "net_sales"):
 
     metric_labels = METRIC_AXIS_LABELS
     color_label = metric_labels.get(metric, label)
-    country_colors = country_color_map(map_df["country_name"])
     metric_display = map_df[metric].map(lambda value: _format_metric_hover(metric, value))
+    map_df = map_df.copy()
+    map_df["rank"] = range(1, len(map_df) + 1)
+    map_df["net_sales_mix"] = map_df["net_sales"] / map_df["net_sales"].sum()
+    map_df["metric_display"] = metric_display
+    map_df["net_sales_display"] = map_df["net_sales"].map(lambda value: _format_metric_hover("net_sales", value))
+    map_df["mix_display"] = map_df["net_sales_mix"].map(lambda value: f"{value:.1%}")
+    top_country = map_df.iloc[0]
 
     fig = px.choropleth(
         map_df,
         locations="iso_alpha",
         locationmode="ISO-3",
-        color="country_name",
-        color_discrete_map=country_colors,
-        category_orders={"country_name": sorted(country_colors.keys())},
-        title=f"{label} by country",
-        labels={"country_name": "Country"},
+        color=metric,
+        color_continuous_scale=_metric_colorscale(metric),
+        title=f"Geographic distribution · {label}",
+        labels={metric: color_label},
         hover_name="country_name",
     )
     fig.update_traces(
-        customdata=metric_display,
+        customdata=map_df[["rank", "metric_display", "net_sales_display", "mix_display"]],
         hovertemplate=(
             "<b>%{hovertext}</b><br>"
-            f"{color_label}: %{{customdata}}<extra></extra>"
+            "Rank: #%{customdata[0]}<br>"
+            f"{color_label}: %{{customdata[1]}}<br>"
+            "Net sales: %{customdata[2]}<br>"
+            "Mix of selected net sales: %{customdata[3]}<extra></extra>"
         ),
+        marker_line_color="#ffffff",
+        marker_line_width=0.8,
     )
     fig.update_layout(
         showlegend=False,
-        title=dict(text=f"{label} by country", x=0.02, xanchor="left"),
+        title=dict(text=f"Geographic distribution · {label}", x=0.02, xanchor="left"),
         geo=dict(
             showframe=False,
             showcoastlines=True,
@@ -248,17 +328,53 @@ def build_world_map_heatmap(df, metric: str = "net_sales"):
             showcountries=True,
             countrycolor="#cbd5e1",
             bgcolor="rgba(0,0,0,0)",
-            projection_type="robinson",
+            projection_type="natural earth",
+            fitbounds="locations",
             lonaxis=dict(showgrid=False),
             lataxis=dict(showgrid=False),
         ),
-        margin=dict(l=0, r=0, t=56, b=0),
-        height=480,
+        coloraxis_colorbar=dict(
+            title=color_label,
+            thickness=12,
+            len=0.72,
+            y=0.5,
+        ),
+        annotations=[{
+            "text": (
+                f"<b>Top country:</b> {top_country['country_name']} · "
+                f"{top_country['metric_display']} · {top_country['mix_display']} of selected net sales"
+            ),
+            "xref": "paper",
+            "yref": "paper",
+            "x": 0.02,
+            "y": 0.02,
+            "showarrow": False,
+            "align": "left",
+            "font": {"size": 12, "color": "#334155"},
+            "bgcolor": "rgba(248,250,252,0.86)",
+            "bordercolor": "#cbd5e1",
+            "borderwidth": 1,
+            "borderpad": 6,
+        }],
+        margin=dict(l=0, r=16, t=58, b=8),
+        height=430,
     )
-    return _apply_layout(fig, f"{label} by country")
+    _apply_currency_colorbar(fig, metric)
+    fig = _apply_layout(fig, f"Geographic distribution · {label}")
+    fig.update_layout(
+        title=dict(text=f"Geographic distribution · {label}", x=0.02, xanchor="left"),
+        margin=dict(l=0, r=16, t=58, b=8),
+        height=430,
+    )
+    return fig
 
 
-def build_country_bar_chart(df, metric: str = "net_sales", top_n: int = 10):
+def build_country_bar_chart(
+    df,
+    metric: str = "net_sales",
+    top_n: int = 10,
+    stack_by_channel: bool = False,
+):
     map_df = aggregate_countries(df, metric=metric).head(top_n)
     label = MAP_METRIC_OPTIONS.get(metric, metric)
     if map_df.empty:
@@ -274,6 +390,59 @@ def build_country_bar_chart(df, metric: str = "net_sales", top_n: int = 10):
         return _apply_layout(fig, f"Top {top_n} countries")
 
     axis_label = METRIC_AXIS_LABELS.get(metric, label)
+    if stack_by_channel and "channel" in df.columns and metric not in RATE_METRICS:
+        top_countries = map_df["country_name"].tolist()
+        channel_df = (
+            df[df["country_name"].isin(top_countries)]
+            .groupby(["country_name", "channel"], as_index=False)
+            .agg(
+                net_sales=("net_sales", "sum"),
+                quantity_sold=("quantity_sold", "sum"),
+                quantity_returned=("quantity_returned", "sum"),
+                contribution_margin=("contribution_margin", "sum"),
+            )
+        )
+        channel_df["return_rate"] = channel_df["quantity_returned"] / channel_df["quantity_sold"]
+        channel_df["contribution_margin_pct"] = (
+            channel_df["contribution_margin"] / channel_df["net_sales"]
+        )
+        channel_df["_metric_display"] = channel_df[metric].map(
+            lambda value: _format_metric_hover(metric, value)
+        )
+        country_order = map_df.sort_values(metric)["country_name"].tolist()
+        colors = channel_color_map(channel_df["channel"].unique())
+        fig = px.bar(
+            channel_df,
+            x=metric,
+            y="country_name",
+            orientation="h",
+            title=f"Top {top_n} countries · {label}",
+            labels={
+                "country_name": "Country",
+                "channel": "Channel",
+                metric: axis_label,
+            },
+            color="channel",
+            color_discrete_map=colors,
+            category_orders={"country_name": country_order},
+            custom_data=["channel", "_metric_display"],
+        )
+        fig.update_layout(
+            barmode="stack",
+            showlegend=True,
+            legend_title_text="Channel",
+            yaxis={"categoryorder": "array", "categoryarray": country_order},
+        )
+        _apply_currency_ticks(fig, metric, axis="x")
+        fig.update_traces(
+            hovertemplate=(
+                "<b>%{y}</b><br>"
+                "Channel: %{customdata[0]}<br>"
+                f"{axis_label}: %{{customdata[1]}}<extra></extra>"
+            ),
+        )
+        return _apply_layout(fig, f"Top {top_n} countries")
+
     country_colors = country_color_map(map_df["country_name"])
     metric_display = map_df[metric].map(lambda value: _format_metric_hover(metric, value))
     fig = px.bar(
@@ -301,7 +470,13 @@ def build_country_bar_chart(df, metric: str = "net_sales", top_n: int = 10):
     return _apply_layout(fig, f"Top {top_n} countries")
 
 
-def build_wholesale_category_bar(df, metric: str = "net_sales", top_n: int = 10):
+def build_wholesale_category_bar(
+    df,
+    metric: str = "net_sales",
+    top_n: int = 10,
+    title_prefix: str = "Wholesale",
+    stack_by_channel: bool = False,
+):
     cat_df = aggregate_wholesale_categories(df, metric=metric).head(top_n)
     label = MAP_METRIC_OPTIONS.get(metric, metric)
     if cat_df.empty:
@@ -317,6 +492,59 @@ def build_wholesale_category_bar(df, metric: str = "net_sales", top_n: int = 10)
         return _apply_layout(fig, f"Top {top_n} categories")
 
     axis_label = METRIC_AXIS_LABELS.get(metric, label)
+    if stack_by_channel and "channel" in df.columns and metric not in RATE_METRICS:
+        top_categories = cat_df["category"].tolist()
+        channel_df = (
+            df[df["category"].isin(top_categories)]
+            .groupby(["category", "channel"], as_index=False)
+            .agg(
+                net_sales=("net_sales", "sum"),
+                quantity_sold=("quantity_sold", "sum"),
+                quantity_returned=("quantity_returned", "sum"),
+                contribution_margin=("contribution_margin", "sum"),
+            )
+        )
+        channel_df["return_rate"] = channel_df["quantity_returned"] / channel_df["quantity_sold"]
+        channel_df["contribution_margin_pct"] = (
+            channel_df["contribution_margin"] / channel_df["net_sales"]
+        )
+        channel_df["_metric_display"] = channel_df[metric].map(
+            lambda value: _format_metric_hover(metric, value)
+        )
+        category_order = cat_df.sort_values(metric)["category"].tolist()
+        colors = channel_color_map(channel_df["channel"].unique())
+        fig = px.bar(
+            channel_df,
+            x=metric,
+            y="category",
+            orientation="h",
+            title=f"Top {top_n} {title_prefix.lower()} categories · {label}",
+            labels={
+                "category": "Category",
+                "channel": "Channel",
+                metric: axis_label,
+            },
+            color="channel",
+            color_discrete_map=colors,
+            category_orders={"category": category_order},
+            custom_data=["channel", "_metric_display"],
+        )
+        fig.update_layout(
+            barmode="stack",
+            showlegend=True,
+            legend_title_text="Channel",
+            yaxis={"categoryorder": "array", "categoryarray": category_order},
+        )
+        _apply_currency_ticks(fig, metric, axis="x")
+        fig.update_traces(
+            hovertemplate=(
+                "<b>%{y}</b><br>"
+                "Channel: %{customdata[0]}<br>"
+                f"{axis_label}: %{{customdata[1]}}<extra></extra>"
+            ),
+        )
+        return _apply_layout(fig, f"Top {top_n} categories")
+
     category_colors = category_color_map(cat_df["category"])
     metric_display = cat_df[metric].map(lambda value: _format_metric_hover(metric, value))
     fig = px.bar(
@@ -324,7 +552,7 @@ def build_wholesale_category_bar(df, metric: str = "net_sales", top_n: int = 10)
         x=metric,
         y="category",
         orientation="h",
-        title=f"Top {top_n} wholesale categories · {label}",
+        title=f"Top {top_n} {title_prefix.lower()} categories · {label}",
         labels={"category": "Category", metric: axis_label},
         color="category",
         color_discrete_map=category_colors,
@@ -344,19 +572,23 @@ def build_wholesale_category_bar(df, metric: str = "net_sales", top_n: int = 10)
     return _apply_layout(fig, f"Top {top_n} categories")
 
 
-def build_wholesale_country_category_heatmap(df, metric: str = "net_sales"):
+def build_wholesale_country_category_heatmap(
+    df,
+    metric: str = "net_sales",
+    title_prefix: str = "Wholesale",
+):
     label = MAP_METRIC_OPTIONS.get(metric, metric)
     if df.empty:
         fig = go.Figure()
         fig.update_layout(
-            title=f"Wholesale heatmap: country × category · {label}",
+            title=f"{title_prefix} heatmap: country × category · {label}",
             annotations=[{
                 "text": "No wholesale data for the selected filters.",
                 "xref": "paper", "yref": "paper", "x": 0.5, "y": 0.5,
                 "showarrow": False, "font": {"size": 14, "color": "#64748b"},
             }],
         )
-        return _apply_layout(fig, "Wholesale country × category")
+        return _apply_layout(fig, f"{title_prefix} country × category")
 
     pivot = df.pivot_table(
         index="country_name",
@@ -370,7 +602,7 @@ def build_wholesale_country_category_heatmap(df, metric: str = "net_sales"):
         pivot,
         aspect="auto",
         color_continuous_scale=_metric_colorscale(metric),
-        title=f"Wholesale heatmap: country × category · {label}",
+        title=f"{title_prefix} heatmap: country × category · {label}",
         labels={"x": "Category", "y": "Country", "color": color_label},
     )
     colorbar = dict(thickness=14, len=0.75, outlinecolor="#e2e8f0")
@@ -381,24 +613,96 @@ def build_wholesale_country_category_heatmap(df, metric: str = "net_sales"):
         colorbar["tickformat"] = ".2s"
         colorbar["separatethousands"] = True
     fig.update_layout(coloraxis_colorbar=colorbar)
-    return _apply_layout(fig, "Wholesale country × category")
+    return _apply_layout(fig, f"{title_prefix} country × category")
 
 
-def build_wholesale_category_trend(df, metric: str = "net_sales"):
+def build_country_channel_category_heatmap(df, metric: str = "net_sales", top_n: int = 24):
     label = MAP_METRIC_OPTIONS.get(metric, metric)
     if df.empty:
         fig = go.Figure()
         fig.update_layout(
-            title=f"Wholesale trend by category · {label}",
+            title=f"Country × channel × category · {label}",
+            annotations=[{
+                "text": "No category data for the selected filters.",
+                "xref": "paper", "yref": "paper", "x": 0.5, "y": 0.5,
+                "showarrow": False, "font": {"size": 14, "color": "#64748b"},
+            }],
+        )
+        return _apply_layout(fig, "Country × channel × category")
+
+    grouped = df.groupby(["country_name", "category", "channel"], as_index=False).agg(
+        net_sales=("net_sales", "sum"),
+        quantity_sold=("quantity_sold", "sum"),
+        quantity_returned=("quantity_returned", "sum"),
+        contribution_margin=("contribution_margin", "sum"),
+    )
+    grouped["return_rate"] = grouped["quantity_returned"] / grouped["quantity_sold"]
+    grouped["contribution_margin_pct"] = grouped["contribution_margin"] / grouped["net_sales"]
+    grouped["country_category"] = grouped["country_name"] + " · " + grouped["category"]
+
+    top_rows = (
+        grouped.groupby("country_category", as_index=False)["net_sales"]
+        .sum()
+        .nlargest(top_n, "net_sales")["country_category"]
+    )
+    grouped = grouped[grouped["country_category"].isin(top_rows)]
+    value_col = metric
+    if metric == "return_rate":
+        value_col = "_rate_value"
+        grouped[value_col] = grouped["return_rate"]
+    elif metric == "contribution_margin_pct":
+        value_col = "_rate_value"
+        grouped[value_col] = grouped["contribution_margin_pct"]
+
+    pivot = grouped.pivot_table(
+        index="country_category",
+        columns="channel",
+        values=value_col,
+        aggfunc="sum",
+        fill_value=0,
+    )
+    row_order = (
+        grouped.groupby("country_category")["net_sales"]
+        .sum()
+        .sort_values(ascending=True)
+        .index
+    )
+    pivot = pivot.loc[row_order]
+
+    color_label = METRIC_AXIS_LABELS.get(metric, label)
+    fig = px.imshow(
+        pivot,
+        aspect="auto",
+        color_continuous_scale=_metric_colorscale(metric),
+        title=f"Country × channel × category · {label}",
+        labels={"x": "Channel", "y": "Country · category", "color": color_label},
+    )
+    colorbar = dict(thickness=14, len=0.75, outlinecolor="#e2e8f0")
+    if metric in RATE_METRICS:
+        colorbar["tickformat"] = ".0%"
+    elif metric in MONETARY_METRICS:
+        colorbar["tickprefix"] = "€"
+        colorbar["tickformat"] = ".2s"
+        colorbar["separatethousands"] = True
+    fig.update_layout(coloraxis_colorbar=colorbar, height=max(420, 22 * len(pivot) + 180))
+    return _apply_layout(fig, "Country × channel × category")
+
+
+def build_wholesale_category_trend(df, metric: str = "net_sales", title_prefix: str = "Wholesale"):
+    label = MAP_METRIC_OPTIONS.get(metric, metric)
+    if df.empty:
+        fig = go.Figure()
+        fig.update_layout(
+            title=f"{title_prefix} trend by category · {label}",
             annotations=[{
                 "text": "No wholesale data for the selected filters.",
                 "xref": "paper", "yref": "paper", "x": 0.5, "y": 0.5,
                 "showarrow": False, "font": {"size": 14, "color": "#64748b"},
             }],
         )
-        return _apply_layout(fig, "Wholesale category trend")
+        return _apply_layout(fig, f"{title_prefix} category trend")
 
-    if metric in RATE_METRICS:
+    if metric == "return_rate":
         trend = df.groupby(["period_month", "category"], as_index=False).agg(
             quantity_sold=("quantity_sold", "sum"),
             quantity_returned=("quantity_returned", "sum"),
@@ -420,7 +724,7 @@ def build_wholesale_category_trend(df, metric: str = "net_sales"):
         y=metric,
         color="category",
         markers=True,
-        title=f"Wholesale trend by category · {label}",
+        title=f"{title_prefix} trend by category · {label}",
         labels={"period_month": "Month", metric: axis_label, "category": "Category"},
     )
     fig.update_layout(hovermode="x unified", legend_title_text="Category")
@@ -431,7 +735,7 @@ def build_wholesale_category_trend(df, metric: str = "net_sales"):
             fig.update_yaxes(range=list(axis_range))
     elif metric in MONETARY_METRICS:
         fig.update_yaxes(tickprefix="€", tickformat=".2s", separatethousands=True)
-    return _apply_layout(fig, "Wholesale category trend")
+    return _apply_layout(fig, f"{title_prefix} category trend")
 
 
 def build_country_channel_heatmap(df):

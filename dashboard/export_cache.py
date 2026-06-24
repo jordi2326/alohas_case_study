@@ -18,16 +18,17 @@ from pathlib import Path
 import pandas as pd
 
 from queries import (
-    CHANNEL_DAILY_FALLBACK_QUERY,
-    CHANNEL_PERFORMANCE_FALLBACK_QUERY,
-    CHANNEL_WEEKLY_FALLBACK_QUERY,
-    COUNTRY_DAILY_FALLBACK_QUERY,
-    COUNTRY_PERFORMANCE_FALLBACK_QUERY,
-    COUNTRY_WEEKLY_FALLBACK_QUERY,
+    CHANNEL_DAILY_QUERY,
+    CHANNEL_PERFORMANCE_QUERY,
+    CHANNEL_WEEKLY_QUERY,
+    CATEGORY_COUNTRY_CHANNEL_DATAMART_QUERY,
+    COUNTRY_DAILY_QUERY,
+    COUNTRY_PERFORMANCE_QUERY,
+    COUNTRY_WEEKLY_QUERY,
     DATA_QUALITY_DETAIL_QUERIES,
     DATA_QUALITY_SUMMARY_QUERY,
     PROJECT_ID,
-    WHOLESALE_PERFORMANCE_FALLBACK_QUERY,
+    WHOLESALE_PERFORMANCE_QUERY,
 )
 
 CACHE_DIR = Path(__file__).resolve().parent / "cache"
@@ -83,13 +84,14 @@ def run_bq_query(query: str) -> pd.DataFrame:
 def main() -> None:
     CACHE_DIR.mkdir(parents=True, exist_ok=True)
     exports = {
-        "channel_monthly": CHANNEL_PERFORMANCE_FALLBACK_QUERY.format(project=PROJECT_ID),
-        "channel_daily": CHANNEL_DAILY_FALLBACK_QUERY.format(project=PROJECT_ID),
-        "channel_weekly": CHANNEL_WEEKLY_FALLBACK_QUERY.format(project=PROJECT_ID),
-        "country_monthly": COUNTRY_PERFORMANCE_FALLBACK_QUERY.format(project=PROJECT_ID),
-        "country_daily": COUNTRY_DAILY_FALLBACK_QUERY.format(project=PROJECT_ID),
-        "country_weekly": COUNTRY_WEEKLY_FALLBACK_QUERY.format(project=PROJECT_ID),
-        "wholesale_monthly": WHOLESALE_PERFORMANCE_FALLBACK_QUERY.format(project=PROJECT_ID),
+        "channel_monthly": CHANNEL_PERFORMANCE_QUERY.format(project=PROJECT_ID),
+        "channel_daily": CHANNEL_DAILY_QUERY.format(project=PROJECT_ID),
+        "channel_weekly": CHANNEL_WEEKLY_QUERY.format(project=PROJECT_ID),
+        "country_monthly": COUNTRY_PERFORMANCE_QUERY.format(project=PROJECT_ID),
+        "country_daily": COUNTRY_DAILY_QUERY.format(project=PROJECT_ID),
+        "country_weekly": COUNTRY_WEEKLY_QUERY.format(project=PROJECT_ID),
+        "wholesale_monthly": WHOLESALE_PERFORMANCE_QUERY.format(project=PROJECT_ID),
+        "category_country_channel_monthly": CATEGORY_COUNTRY_CHANNEL_DATAMART_QUERY.format(project=PROJECT_ID),
         "data_quality_summary": DATA_QUALITY_SUMMARY_QUERY.format(project=PROJECT_ID),
     }
     for name, query in exports.items():

@@ -5,10 +5,12 @@ import pandas as pd
 import streamlit as st
 import streamlit.components.v1 as components
 
-from case_study import render_case_study_tab
+from case_study import render_q1_channel_page, render_q2_returns_page, render_q3_margin_page
 from charts import (
+    build_channel_rate_comparison,
     build_country_bar_chart,
     build_country_channel_heatmap,
+    build_country_channel_category_heatmap,
     build_margin_chart,
     build_mix_chart,
     build_net_sales_chart,
@@ -37,6 +39,7 @@ from data import (
     intersect_period,
     latest_period,
     load_channel_performance,
+    load_category_country_channel_performance,
     load_country_performance,
     load_data_quality_detail,
     load_data_quality_summary,
@@ -53,7 +56,12 @@ from data import (
     resolve_period_col,
     PERIOD_PRESETS,
 )
-from insights import build_channel_insights, build_country_insights, build_wholesale_insights
+from insights import (
+    build_all_channel_category_insights,
+    build_channel_insights,
+    build_country_insights,
+    build_wholesale_insights,
+)
 from queries import DATA_QUALITY_DETAIL_QUERIES
 from theme import (
     ACCENT,
@@ -168,12 +176,13 @@ def chart_panel(
     fig,
     *,
     guide_key: str | None = None,
+    chart_key: str | None = None,
 ) -> None:
     guide = CHART_GUIDES.get(guide_key or metric_key, "")
     definition = METRIC_TOOLTIPS.get(metric_key, "")
     with st.container(border=True):
         panel_header(title, definition=definition, guide=guide)
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, use_container_width=True, key=chart_key)
 
 
 def style_summary_table(display: pd.DataFrame, by_country: bool):
@@ -666,6 +675,7 @@ def render_wholesale_dashboard(
         "Map metric",
         build_world_map_heatmap(filtered_wholesale, metric=map_metric),
         guide_key="Map metric",
+        chart_key="wholesale_map",
     )
     wleft, wright = st.columns(2)
     with wleft:
@@ -674,6 +684,7 @@ def render_wholesale_dashboard(
             MAP_METRIC_OPTIONS.get(map_metric, "Net sales"),
             build_country_bar_chart(filtered_wholesale, metric=map_metric),
             guide_key="Wholesale country bar",
+            chart_key="wholesale_country_bar",
         )
     with wright:
         chart_panel(
@@ -681,6 +692,7 @@ def render_wholesale_dashboard(
             MAP_METRIC_OPTIONS.get(map_metric, "Net sales"),
             build_wholesale_category_bar(filtered_wholesale, metric=map_metric),
             guide_key="Wholesale category bar",
+            chart_key="wholesale_category_bar",
         )
     wrow2_left, wrow2_right = st.columns(2)
     with wrow2_left:
@@ -689,6 +701,7 @@ def render_wholesale_dashboard(
             MAP_METRIC_OPTIONS.get(map_metric, "Net sales"),
             build_wholesale_country_category_heatmap(filtered_wholesale, metric=map_metric),
             guide_key="Wholesale country × category",
+            chart_key="wholesale_country_category_heatmap",
         )
     with wrow2_right:
         chart_panel(
@@ -696,6 +709,7 @@ def render_wholesale_dashboard(
             MAP_METRIC_OPTIONS.get(map_metric, "Net sales"),
             build_wholesale_category_trend(filtered_wholesale, metric=map_metric),
             guide_key="Wholesale category trend",
+            chart_key="wholesale_category_trend",
         )
     render_wholesale_table(
         filtered_wholesale,
@@ -711,6 +725,249 @@ def render_wholesale_dashboard(
         wholesale_pos,
         wholesale_neg,
         wholesale_neu,
+    )
+
+
+def filter_category_country_channel_data(
+    df: pd.DataFrame,
+    start_date,
+    end_date,
+    *,
+    channels: list[str],
+    countries: list[str],
+    categories: list[str],
+) -> pd.DataFrame:
+    if df.empty:
+        return df
+    mask = (
+        (df["period_month"] >= pd.Timestamp(start_date))
+        & (df["period_month"] <= pd.Timestamp(end_date))
+        & (df["channel"].isin(channels))
+        & (df["country"].isin(countries))
+        & (df["category"].isin(categories))
+    )
+    return df.loc[mask].copy()
+
+
+def render_global_country_channel_category(
+    category_df: pd.DataFrame,
+    _wholesale_df: pd.DataFrame,
+    *,
+    start_date,
+    end_date,
+    selected_channels: list[str],
+    selected_countries: list[str],
+    map_metric: str,
+) -> None:
+    st.markdown("#### All channels · country × category")
+    st.caption(
+        "Compare categories by market across the selected sales channels."
+    )
+    if category_df.empty:
+        st.info(
+            "All-channel category data could not be auto-loaded yet. Check BigQuery permissions "
+            "or run `python dashboard/export_cache.py` once to refresh the local cache."
+        )
+        return
+
+    available_channels = sorted(category_df["channel"].dropna().unique())
+    selected_view_channels = [
+        channel for channel in selected_channels
+        if channel in available_channels
+    ]
+    if not selected_view_channels:
+        selected_view_channels = available_channels
+
+    selected_view_channels = st.multiselect(
+        "Channels",
+        available_channels,
+        default=selected_view_channels,
+        key="global_country_channel_channels",
+        disabled=len(available_channels) == 1,
+    )
+    if not selected_view_channels:
+        st.warning("Select at least one channel.")
+        return
+
+    categories = sorted(category_df["category"].dropna().unique())
+    selected_categories = st.multiselect(
+        "Categories",
+        categories,
+        default=categories,
+        key="global_country_channel_categories",
+    )
+    if not selected_categories:
+        st.warning("Select at least one category.")
+        return
+
+    filtered_global = filter_category_country_channel_data(
+        category_df,
+        start_date,
+        end_date,
+        channels=selected_view_channels,
+        countries=selected_countries,
+        categories=selected_categories,
+    )
+    if filtered_global.empty:
+        st.warning("No country × channel × category rows for the selected filters.")
+        return
+
+    metric_label = MAP_METRIC_OPTIONS.get(map_metric, map_metric)
+    summary = (
+        filtered_global.groupby(["country_name", "channel", "category"], as_index=False)
+        .agg(
+            net_sales=("net_sales", "sum"),
+            quantity_sold=("quantity_sold", "sum"),
+            quantity_returned=("quantity_returned", "sum"),
+            contribution_margin=("contribution_margin", "sum"),
+        )
+    )
+    summary["return_rate"] = summary["quantity_returned"] / summary["quantity_sold"]
+    summary["margin_pct"] = summary["contribution_margin"] / summary["net_sales"]
+
+    total_sales = summary["net_sales"].sum()
+    total_units = summary["quantity_sold"].sum()
+    total_returned = summary["quantity_returned"].sum()
+    total_margin = summary["contribution_margin"].sum()
+    global_return_rate = total_returned / total_units if total_units else None
+    global_margin_pct = total_margin / total_sales if total_sales else None
+    top_country = (
+        summary.groupby("country_name", as_index=False)["net_sales"]
+        .sum()
+        .sort_values("net_sales", ascending=False)
+    )
+    top_category = (
+        summary.groupby("category", as_index=False)["net_sales"]
+        .sum()
+        .sort_values("net_sales", ascending=False)
+    )
+
+    k1, k2, k3, k4, k5 = st.columns(5)
+    with k1:
+        render_kpi_card("Selected net sales", f"€{total_sales:,.0f}", metric_key="Net sales")
+    with k2:
+        render_kpi_card(
+            "Selected return rate",
+            f"{global_return_rate:.1%}" if global_return_rate is not None else "—",
+            metric_key="Return rate",
+        )
+    with k3:
+        render_kpi_card(
+            "Selected margin",
+            f"{global_margin_pct:.1%}" if global_margin_pct is not None else "—",
+            metric_key="Margin %",
+        )
+    with k4:
+        render_kpi_card(
+            "Top country",
+            top_country.iloc[0]["country_name"] if not top_country.empty else "—",
+            metric_key="Top country",
+        )
+    with k5:
+        render_kpi_card(
+            "Top category",
+            top_category.iloc[0]["category"] if not top_category.empty else "—",
+            metric_key="Top wholesale category",
+        )
+
+    title_prefix = "All channels"
+    chart_panel(
+        f"{title_prefix} map · {metric_label}",
+        "Map metric",
+        build_world_map_heatmap(filtered_global, metric=map_metric),
+        guide_key="Map metric",
+        chart_key="global_map",
+    )
+    left, right = st.columns(2)
+    with left:
+        chart_panel(
+            f"Top countries · {metric_label}",
+            MAP_METRIC_OPTIONS.get(map_metric, "Net sales"),
+            build_country_bar_chart(
+                filtered_global,
+                metric=map_metric,
+                stack_by_channel=True,
+            ),
+            guide_key="Country bar",
+            chart_key="global_country_bar",
+        )
+    with right:
+        chart_panel(
+            f"Top categories · {metric_label}",
+            MAP_METRIC_OPTIONS.get(map_metric, "Net sales"),
+            build_wholesale_category_bar(
+                filtered_global,
+                metric=map_metric,
+                title_prefix=title_prefix,
+                stack_by_channel=True,
+            ),
+            guide_key="Wholesale category bar",
+            chart_key="global_category_bar",
+        )
+
+    row2_left, row2_right = st.columns(2)
+    with row2_left:
+        chart_panel(
+            f"Country × category · {metric_label}",
+            MAP_METRIC_OPTIONS.get(map_metric, "Net sales"),
+            build_wholesale_country_category_heatmap(
+                filtered_global,
+                metric=map_metric,
+                title_prefix=title_prefix,
+            ),
+            guide_key="Wholesale country × category",
+            chart_key="global_country_category_heatmap",
+        )
+    with row2_right:
+        chart_panel(
+            f"Category trend · {metric_label}",
+            MAP_METRIC_OPTIONS.get(map_metric, "Net sales"),
+            build_wholesale_category_trend(
+                filtered_global,
+                metric=map_metric,
+                title_prefix=title_prefix,
+            ),
+            guide_key="Wholesale category trend",
+            chart_key="global_category_trend",
+        )
+
+    chart_panel(
+        "Channel comparison · Margin % vs return rate",
+        "Margin %",
+        build_channel_rate_comparison(filtered_global),
+        guide_key="Channel rate comparison",
+        chart_key="global_channel_rate_comparison",
+    )
+
+    if len(selected_view_channels) > 1:
+        chart_panel(
+            f"Country × channel × category · {metric_label}",
+            MAP_METRIC_OPTIONS.get(map_metric, "Net sales"),
+            build_country_channel_category_heatmap(filtered_global, metric=map_metric),
+            guide_key="Country heatmap",
+            chart_key="global_country_channel_category_heatmap",
+        )
+
+    summary = summary.sort_values("net_sales", ascending=False).head(30)
+    st.markdown("**Top country × channel × category combinations**")
+    st.dataframe(
+        summary.assign(
+            net_sales=lambda d: d["net_sales"].map(lambda v: f"€{v:,.0f}"),
+            return_rate=lambda d: d["return_rate"].map(lambda v: f"{v:.1%}"),
+            margin_pct=lambda d: d["margin_pct"].map(lambda v: f"{v:.1%}"),
+        )[["country_name", "channel", "category", "net_sales", "return_rate", "margin_pct"]],
+        use_container_width=True,
+        hide_index=True,
+    )
+    all_channel_pos, all_channel_neg, all_channel_neu = build_all_channel_category_insights(
+        filtered_global,
+        map_metric=map_metric,
+    )
+    render_insights_footer(
+        "All-channel insights",
+        all_channel_pos,
+        all_channel_neg,
+        all_channel_neu,
     )
 
 
@@ -783,9 +1040,10 @@ def render_kpi_card(
         )
     else:
         delta_html = '<span class="kpi-card-delta kpi-card-delta-empty" aria-hidden="true">&nbsp;</span>'
+    card_class = "kpi-card kpi-card-period" if metric_key == "Period" else "kpi-card"
     with st.container(border=True):
         st.markdown(
-            f'<div class="kpi-card">'
+            f'<div class="{card_class}">'
             f'<div class="kpi-card-top">'
             f'<span class="kpi-card-label">{html.escape(label)}</span>'
             f"{tip}"
@@ -840,6 +1098,11 @@ def get_wholesale_data(_schema_version: int = 5):
 
 
 @st.cache_data(ttl=600)
+def get_category_country_channel_data(_schema_version: int = 6):
+    return load_category_country_channel_performance()
+
+
+@st.cache_data(ttl=600)
 def get_data_quality_summary(_schema_version: int = 5):
     return load_data_quality_summary()
 
@@ -876,6 +1139,7 @@ try:
     df_meta = get_channel_data("month")
     country_meta = get_country_data("month")
     wholesale_meta = get_wholesale_data()
+    category_country_channel_meta = get_category_country_channel_data()
 except Exception as exc:
     st.error("Could not load dashboard data.")
     st.code(str(exc))
@@ -885,12 +1149,6 @@ except Exception as exc:
     )
     st.exception(exc)
     st.stop()
-
-if using_cached_data():
-    st.info(
-        "Running on **cached snapshot** (`dashboard/cache`) — no BigQuery credentials required. "
-        "Data is a fixed export; refresh locally with `python dashboard/export_cache.py`."
-    )
 
 if "period_preset" not in st.session_state:
     st.session_state["period_preset"] = "last_1_year"
@@ -905,6 +1163,7 @@ try:
     df = get_channel_data(active_granularity)
     country_df = get_country_data("month")
     wholesale_df = get_wholesale_data()
+    category_country_channel_df = get_category_country_channel_data()
 except Exception as exc:
     st.error("Could not load dashboard data.")
     st.code(str(exc))
@@ -914,12 +1173,6 @@ except Exception as exc:
     )
     st.exception(exc)
     st.stop()
-
-if using_cached_data():
-    st.info(
-        "Running on **cached snapshot** (`dashboard/cache`) — no BigQuery credentials required. "
-        "Data is a fixed export; refresh locally with `python dashboard/export_cache.py`."
-    )
 
 min_date, max_date = picker_date_bounds(df, country_df)
 channel_min_date, channel_max_date = data_bounds(df_meta)
@@ -1031,11 +1284,6 @@ with st.sidebar:
                 granularity=active_granularity,
             )
             st.session_state["period_preset"] = matched or "custom"
-    map_metric = st.selectbox(
-        "Map metric",
-        options=list(MAP_METRIC_OPTIONS.keys()),
-        format_func=lambda key: MAP_METRIC_OPTIONS[key],
-    )
     with st.expander("Metric definitions"):
         for name, desc in METRIC_TOOLTIPS.items():
             st.markdown(f"**{name}** — {desc}")
@@ -1153,18 +1401,39 @@ with c5:
 
 render_channel_legend(selected_channels)
 
-tab_channels, tab_countries, tab_table, tab_quality, tab_case = st.tabs(
-    ["Channels", "Countries", "Data tables", "Data quality", "Case study"],
+case_wholesale = filter_wholesale_data(
+    wholesale_df,
+    start_date=start_date,
+    end_date=end_date,
+    countries=selected_countries,
+)
+wholesale_kpis = compute_wholesale_kpis(
+    wholesale_df,
+    start_date,
+    end_date,
+    countries=selected_countries,
+)
+
+tab_channels, tab_countries, tab_q1, tab_q2, tab_q3, tab_table, tab_quality = st.tabs(
+    [
+        "Channel scorecard",
+        "Countries & wholesale",
+        "01 · Channel sales",
+        "02 · Returns",
+        "03 · Margin",
+        "Data tables",
+        "Data quality",
+    ],
 )
 
 with tab_channels:
     left, right = st.columns(2)
     with left:
-        chart_panel("Net sales", "Net sales", build_net_sales_chart(filtered))
-        chart_panel("Return rate", "Return rate", build_return_rate_chart(filtered))
+        chart_panel("Net sales", "Net sales", build_net_sales_chart(filtered), chart_key="scorecard_net_sales")
+        chart_panel("Return rate", "Return rate", build_return_rate_chart(filtered), chart_key="scorecard_return_rate")
     with right:
-        chart_panel("Channel mix", "Mix %", build_mix_chart(filtered))
-        chart_panel("Contribution margin", "Margin %", build_margin_chart(filtered))
+        chart_panel("Channel mix", "Mix %", build_mix_chart(filtered), chart_key="scorecard_mix")
+        chart_panel("Contribution margin", "Margin %", build_margin_chart(filtered), chart_key="scorecard_margin")
 
     channel_pos, channel_neg, channel_neu = build_channel_insights(filtered, latest, prior_slice)
     render_insights_footer(
@@ -1175,7 +1444,20 @@ with tab_channels:
     )
 
 with tab_countries:
-    tab_all_countries, tab_wholesale = st.tabs(["All channels", "Wholesale"])
+    map_metric = st.selectbox(
+        "Map metric",
+        options=list(MAP_METRIC_OPTIONS.keys()),
+        format_func=lambda key: MAP_METRIC_OPTIONS[key],
+        key="countries_map_metric",
+    )
+    country_tabs = st.tabs([
+        "All channels",
+        "Wholesale · category",
+        "All channels · country × category",
+    ])
+    tab_all_countries = country_tabs[0]
+    tab_wholesale = country_tabs[1]
+    tab_global_category = country_tabs[2]
 
     with tab_all_countries:
         if filtered_countries.empty:
@@ -1189,14 +1471,20 @@ with tab_countries:
                 "Map metric",
                 build_world_map_heatmap(filtered_countries, metric=map_metric),
                 guide_key="Map metric",
+                chart_key="countries_map",
             )
             left, right = st.columns(2)
             with left:
                 chart_panel(
                     f"Top countries · {map_label}",
                     MAP_METRIC_OPTIONS.get(map_metric, "Net sales"),
-                    build_country_bar_chart(filtered_countries, metric=map_metric),
+                    build_country_bar_chart(
+                        filtered_countries,
+                        metric=map_metric,
+                        stack_by_channel=True,
+                    ),
                     guide_key="Country bar",
+                    chart_key="countries_bar",
                 )
             with right:
                 chart_panel(
@@ -1204,6 +1492,7 @@ with tab_countries:
                     "Net sales",
                     build_country_channel_heatmap(filtered_countries),
                     guide_key="Country heatmap",
+                    chart_key="countries_channel_heatmap",
                 )
             render_data_table(
                 filtered_countries,
@@ -1232,6 +1521,26 @@ with tab_countries:
             selected_countries=selected_countries,
             map_metric=map_metric,
         )
+
+    with tab_global_category:
+        render_global_country_channel_category(
+            category_country_channel_df,
+            wholesale_df,
+            start_date=country_kpi_start,
+            end_date=country_kpi_end,
+            selected_channels=selected_channels,
+            selected_countries=selected_countries,
+            map_metric=map_metric,
+        )
+
+with tab_q1:
+    render_q1_channel_page(filtered, case_wholesale, channel_kpis, wholesale_kpis)
+
+with tab_q2:
+    render_q2_returns_page()
+
+with tab_q3:
+    render_q3_margin_page(filtered, case_wholesale, filtered_countries)
 
 with tab_table:
     render_data_table(
@@ -1268,12 +1577,3 @@ with tab_table:
 
 with tab_quality:
     render_data_quality_tab()
-
-with tab_case:
-    case_wholesale = filter_wholesale_data(
-        wholesale_df,
-        start_date=start_date,
-        end_date=end_date,
-        countries=selected_countries,
-    )
-    render_case_study_tab(filtered, case_wholesale)

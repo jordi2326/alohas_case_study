@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
+import subprocess
 from pathlib import Path
 
 import pandas as pd
@@ -13,6 +15,8 @@ from queries import (
     CHANNEL_PERFORMANCE_QUERY,
     CHANNEL_WEEKLY_FALLBACK_QUERY,
     CHANNEL_WEEKLY_QUERY,
+    CATEGORY_COUNTRY_CHANNEL_DATAMART_QUERY,
+    CATEGORY_COUNTRY_CHANNEL_QUERY,
     COUNTRY_DAILY_FALLBACK_QUERY,
     COUNTRY_DAILY_QUERY,
     COUNTRY_PERFORMANCE_FALLBACK_QUERY,
@@ -184,6 +188,48 @@ def _read_cache(name: str) -> pd.DataFrame:
     return _normalize_dataframe(pd.read_parquet(path))
 
 
+def _write_cache(name: str, df: pd.DataFrame) -> None:
+    CACHE_DIR.mkdir(parents=True, exist_ok=True)
+    df.to_parquet(CACHE_DIR / f"{name}.parquet", index=False)
+
+
+def _find_bq_cli() -> str | None:
+    for candidate in (
+        shutil.which("bq"),
+        shutil.which("bq.cmd"),
+        os.path.join(
+            os.environ.get("LOCALAPPDATA", ""),
+            "Google", "Cloud SDK", "google-cloud-sdk", "bin", "bq.cmd",
+        ),
+    ):
+        if candidate and os.path.isfile(candidate):
+            return candidate
+    return None
+
+
+def _run_bq_cli_query(query: str) -> pd.DataFrame:
+    bq_path = _find_bq_cli()
+    if not bq_path:
+        raise RuntimeError("bq CLI not found")
+    result = subprocess.run(
+        [
+            bq_path,
+            "query",
+            "--use_legacy_sql=false",
+            "--format=json",
+            "--quiet",
+            "--max_rows=1000000",
+        ],
+        input=query,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if result.returncode != 0:
+        raise RuntimeError((result.stderr or result.stdout or "BigQuery query failed").strip())
+    return _normalize_dataframe(pd.DataFrame(json.loads(result.stdout or "[]")))
+
+
 def _credentials_from_streamlit_secrets():
     try:
         import streamlit as st
@@ -321,6 +367,38 @@ def load_wholesale_performance() -> pd.DataFrame:
     else:
         query = _pick_query(WHOLESALE_PERFORMANCE_QUERY, WHOLESALE_PERFORMANCE_FALLBACK_QUERY)
         df = _run_bq_query(query)
+    df["country_name"] = df["country"].map(COUNTRY_NAME_MAP).fillna(df["country"])
+    df["iso_alpha"] = df["country"].map(ISO3_MAP).fillna(df["country"])
+    return df
+
+
+def load_category_country_channel_performance() -> pd.DataFrame:
+    cache_key = "category_country_channel_monthly"
+    datamart_query = CATEGORY_COUNTRY_CHANNEL_DATAMART_QUERY.format(project=PROJECT_ID)
+    fallback_query = CATEGORY_COUNTRY_CHANNEL_QUERY.format(project=PROJECT_ID)
+    query = datamart_query if datamart_available() else fallback_query
+    if using_cached_data():
+        try:
+            df = _read_cache(cache_key)
+        except FileNotFoundError:
+            try:
+                df = _run_bq_query(query)
+            except Exception:
+                try:
+                    df = _run_bq_query(fallback_query)
+                except Exception:
+                    try:
+                        df = _run_bq_cli_query(fallback_query)
+                    except Exception:
+                        return pd.DataFrame()
+            _write_cache(cache_key, df)
+    else:
+        try:
+            df = _run_bq_query(query)
+        except Exception:
+            if query == fallback_query:
+                raise
+            df = _run_bq_query(fallback_query)
     df["country_name"] = df["country"].map(COUNTRY_NAME_MAP).fillna(df["country"])
     df["iso_alpha"] = df["country"].map(ISO3_MAP).fillna(df["country"])
     return df
@@ -757,6 +835,12 @@ def format_period_label(start_date, end_date) -> str:
     end = pd.Timestamp(end_date)
     if start.date() == end.date():
         return start.strftime("%d %b %Y")
+    if (
+        start.day == 1
+        and end.normalize() == (end + pd.offsets.MonthEnd(0)).normalize()
+        and (start.year != end.year or start.month != end.month)
+    ):
+        return f"{start.strftime('%b %Y')} – {end.strftime('%b %Y')}"
     if (
         start.year == end.year
         and start.month == end.month
